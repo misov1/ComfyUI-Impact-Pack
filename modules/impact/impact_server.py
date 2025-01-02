@@ -22,7 +22,6 @@ import comfy
 from io import BytesIO
 import random
 from server import PromptServer
-import logging
 
 
 sam_predictor = None
@@ -80,7 +79,7 @@ async def sam_prepare(request):
 
         model_name = os.path.join(impact_pack.model_path, "sams", model_name)
 
-        logging.info(f"[Impact Pack] Loading SAM model '{impact_pack.model_path}'")
+        print(f"[INFO] ComfyUI-Impact-Pack: Loading SAM model '{impact_pack.model_path}'")
 
         filename, image_dir = folder_paths.annotated_filepath(data["filename"])
 
@@ -96,7 +95,7 @@ async def sam_prepare(request):
         thread = threading.Thread(target=async_prepare_sam, args=(image_dir, model_name, filename,))
         thread.start()
 
-        logging.info("[Impact Pack] SAM model loaded. ")
+        print(f"[INFO] ComfyUI-Impact-Pack: SAM model loaded. ")
     return web.Response(status=200)
 
 
@@ -108,7 +107,7 @@ async def release_sam(request):
         del sam_predictor
         sam_predictor = None
 
-    logging.info("[Impact Pack]: unloading SAM model")
+    print(f"[INFO] ComfyUI-Impact-Pack: unloading SAM model")
 
 
 @PromptServer.instance.routes.post("/sam/detect")
@@ -316,8 +315,6 @@ def onprompt_for_switch(json_data):
     inversed_switch_info = {}
     onprompt_switch_info = {}
     onprompt_cond_branch_info = {}
-    disabled_switch = set()
-
 
     for k, v in json_data['prompt'].items():
         if 'class_type' not in v:
@@ -325,24 +322,20 @@ def onprompt_for_switch(json_data):
 
         cls = v['class_type']
         if cls == 'ImpactInversedSwitch':
-            # if 'sel_mode' is 'select_on_prompt'
             if 'sel_mode' in v['inputs'] and v['inputs']['sel_mode'] and 'select' in v['inputs']:
                 select_input = v['inputs']['select']
-                # if 'select' is converted input
                 if isinstance(select_input, list) and len(select_input) == 2:
                     input_node = json_data['prompt'][select_input[0]]
                     if input_node['class_type'] == 'ImpactInt' and 'inputs' in input_node and 'value' in input_node['inputs']:
                         inversed_switch_info[k] = input_node['inputs']['value']
                     else:
-                        logging.warning(f"\n##### ##### #####\n[Impact Pack] {cls}: For the 'select' operation, only 'select_index' of the 'ImpactInversedSwitch', which is not an input, or 'ImpactInt' and 'Primitive' are allowed as inputs if 'select_on_prompt' is selected.\n##### ##### #####\n")
+                        print(f"\n##### ##### #####\n[WARN] {cls}: For the 'select' operation, only 'select_index' of the 'ImpactInversedSwitch', which is not an input, or 'ImpactInt' and 'Primitive' are allowed as inputs if 'select_on_prompt' is selected.\n##### ##### #####\n")
                 else:
                     inversed_switch_info[k] = select_input
 
         elif cls in ['ImpactSwitch', 'LatentSwitch', 'SEGSSwitch', 'ImpactMakeImageList']:
-            # if 'sel_mode' is 'select_on_prompt'
             if 'sel_mode' in v['inputs'] and v['inputs']['sel_mode'] and 'select' in v['inputs']:
                 select_input = v['inputs']['select']
-                # if 'select' is converted input
                 if isinstance(select_input, list) and len(select_input) == 2:
                     input_node = json_data['prompt'][select_input[0]]
                     if input_node['class_type'] == 'ImpactInt' and 'inputs' in input_node and 'value' in input_node['inputs']:
@@ -351,13 +344,9 @@ def onprompt_for_switch(json_data):
                         if isinstance(input_node['inputs']['select'], int):
                             onprompt_switch_info[k] = input_node['inputs']['select']
                         else:
-                            logging.warning(f"\n##### ##### #####\n[Impact Pack] {cls}: For the 'select' operation, only 'select_index' of the 'ImpactSwitch', which is not an input, or 'ImpactInt' and 'Primitive' are allowed as inputs if 'select_on_prompt' is selected.\n##### ##### #####\n")
+                            print(f"\n##### ##### #####\n[WARN] {cls}: For the 'select' operation, only 'select_index' of the 'ImpactSwitch', which is not an input, or 'ImpactInt' and 'Primitive' are allowed as inputs if 'select_on_prompt' is selected.\n##### ##### #####\n")
                 else:
                     onprompt_switch_info[k] = select_input
-
-                if k in onprompt_switch_info and f'input{onprompt_switch_info[k]}' not in v['inputs']:
-                    # disconnect output
-                    disabled_switch.add(k)
 
         elif cls == 'ImpactConditionalBranchSelMode':
             if 'sel_mode' in v['inputs'] and v['inputs']['sel_mode'] and 'cond' in v['inputs']:
@@ -382,11 +371,6 @@ def onprompt_for_switch(json_data):
                 if vv[0] in inversed_switch_info:
                     if vv[1] + 1 != inversed_switch_info[vv[0]]:
                         disable_targets.add(kk)
-                    else:
-                        del inversed_switch_info[k]
-
-                if vv[0] in disabled_switch:
-                    disable_targets.add(kk)
 
         if k in onprompt_switch_info:
             selected_slot_name = f"input{onprompt_switch_info[k]}"
@@ -402,11 +386,6 @@ def onprompt_for_switch(json_data):
 
         for kk in disable_targets:
             del v['inputs'][kk]
-
-    # inversed_switch - select out of range
-    for target in inversed_switch_info.keys():
-        del json_data['prompt'][target]['inputs']['input']
-
 
 def onprompt_for_pickers(json_data):
     detected_pickers = set()
@@ -491,7 +470,7 @@ def onprompt_populate_wildcards(json_data):
                             if not isinstance(input_seed, int):
                                 continue
                         else:
-                            logging.info(f"[Impact Pack] Only `ImpactInt`, `Seed (rgthree)` and `Primitive` Node are allowed as the seed for '{v['class_type']}'. It will be ignored. ")
+                            print(f"[Impact Pack] Only `ImpactInt`, `Seed (rgthree)` and `Primitive` Node are allowed as the seed for '{v['class_type']}'. It will be ignored. ")
                             continue
                     except:
                         continue
@@ -554,7 +533,7 @@ def onprompt(json_data):
         regional_sampler_seed_update(json_data)
         core.current_prompt = json_data
     except Exception as e:
-        logging.warning(f"[Impact Pack] ComfyUI-Impact-Pack: Error on prompt - several features will not work.\n{e}")
+        print(f"[WARN] ComfyUI-Impact-Pack: Error on prompt - several features will not work.\n{e}")
 
     return json_data
 

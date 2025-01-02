@@ -11,7 +11,6 @@ from impact.utils import *
 from collections import namedtuple
 import numpy as np
 from skimage.measure import label
-from PIL import ImageOps
 
 import nodes
 import comfy_extras.nodes_upscale_model as model_upscale
@@ -48,7 +47,7 @@ preview_bridge_last_mask_cache = {}
 
 current_prompt = None
 
-SCHEDULERS = comfy.samplers.KSampler.SCHEDULERS + ['AYS SDXL', 'AYS SD1', 'AYS SVD', 'GITS[coeff=1.2]', 'LTXV[default]']
+SCHEDULERS = comfy.samplers.KSampler.SCHEDULERS + ['AYS SDXL', 'AYS SD1', 'AYS SVD', 'GITS[coeff=1.2]']
 
 
 def is_execution_model_version_supported():
@@ -70,13 +69,6 @@ def set_previewbridge_image(node_id, file, item):
     pb_id = f"${node_id}-{pb_id_cnt}"
     preview_bridge_image_id_map[pb_id] = (file, item)
     preview_bridge_image_name_map[node_id, file] = (pb_id, item)
-    if os.path.isfile(file):
-        i = Image.open(file)
-        i = ImageOps.exif_transpose(i)
-        if 'A' in i.getbands():
-            mask = np.array(i.getchannel('A')).astype(np.float32) / 255.0
-            mask = 1. - torch.from_numpy(mask)
-            preview_bridge_last_mask_cache[node_id] = mask.unsqueeze(0)
     pb_id_cnt += 1
 
     return pb_id
@@ -327,12 +319,7 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
 
     # prepare mask
     if noise_mask is not None and inpaint_model:
-        imc_encode = nodes.InpaintModelConditioning().encode
-        if 'noise_mask' in inspect.signature(imc_encode).parameters:
-            positive, negative, latent_image = imc_encode(positive, negative, upscaled_image, vae, mask=noise_mask, noise_mask=True)
-        else:
-            print(f"[Impact Pack] ComfyUI is an outdated version.")
-            positive, negative, latent_image = imc_encode(positive, negative, upscaled_image, vae, noise_mask)
+        positive, negative, latent_image = nodes.InpaintModelConditioning().encode(positive, negative, upscaled_image, vae, noise_mask)
     else:
         latent_image = to_latent_image(upscaled_image, vae)
         if noise_mask is not None:
@@ -1367,14 +1354,9 @@ def segs_to_masklist(segs):
     return masks
 
 
-def vae_decode(vae, samples, use_tile, hook, tile_size=512, overlap=64):
+def vae_decode(vae, samples, use_tile, hook, tile_size=512):
     if use_tile:
-        decoder = nodes.VAEDecodeTiled()
-        if 'overlap' in inspect.signature(decoder.decode).parameters:
-            pixels = decoder.decode(vae, samples, tile_size, overlap=overlap)[0]
-        else:
-            print(f"[Impact Pack] Your ComfyUI is outdated.")
-            pixels = decoder.decode(vae, samples, tile_size)[0]
+        pixels = nodes.VAEDecodeTiled().decode(vae, samples, tile_size)[0]
     else:
         pixels = nodes.VAEDecode().decode(vae, samples)[0]
 
@@ -1384,14 +1366,9 @@ def vae_decode(vae, samples, use_tile, hook, tile_size=512, overlap=64):
     return pixels
 
 
-def vae_encode(vae, pixels, use_tile, hook, tile_size=512, overlap=64):
+def vae_encode(vae, pixels, use_tile, hook, tile_size=512):
     if use_tile:
-        encoder = nodes.VAEEncodeTiled()
-        if 'overlap' in inspect.signature(encoder.encode).parameters:
-            samples = encoder.encode(vae, pixels, tile_size, overlap=overlap)[0]
-        else:
-            print(f"[Impact Pack] Your ComfyUI is outdated.")
-            samples = encoder.encode(vae, pixels, tile_size)[0]
+        samples = nodes.VAEEncodeTiled().encode(vae, pixels, tile_size)[0]
     else:
         samples = nodes.VAEEncode().encode(vae, pixels)[0]
 
@@ -1401,12 +1378,12 @@ def vae_encode(vae, pixels, use_tile, hook, tile_size=512, overlap=64):
     return samples
 
 
-def latent_upscale_on_pixel_space_shape(samples, scale_method, w, h, vae, use_tile=False, tile_size=512, save_temp_prefix=None, hook=None, overlap=64):
-    return latent_upscale_on_pixel_space_shape2(samples, scale_method, w, h, vae, use_tile, tile_size, save_temp_prefix, hook, overlap=overlap)[0]
+def latent_upscale_on_pixel_space_shape(samples, scale_method, w, h, vae, use_tile=False, tile_size=512, save_temp_prefix=None, hook=None):
+    return latent_upscale_on_pixel_space_shape2(samples, scale_method, w, h, vae, use_tile, tile_size, save_temp_prefix, hook)[0]
 
 
-def latent_upscale_on_pixel_space_shape2(samples, scale_method, w, h, vae, use_tile=False, tile_size=512, save_temp_prefix=None, hook=None, overlap=64):
-    pixels = vae_decode(vae, samples, use_tile, hook, tile_size=tile_size, overlap=overlap)
+def latent_upscale_on_pixel_space_shape2(samples, scale_method, w, h, vae, use_tile=False, tile_size=512, save_temp_prefix=None, hook=None):
+    pixels = vae_decode(vae, samples, use_tile, hook, tile_size=tile_size)
 
     if save_temp_prefix is not None:
         nodes.PreviewImage().save_images(pixels, filename_prefix=save_temp_prefix)
@@ -1417,15 +1394,15 @@ def latent_upscale_on_pixel_space_shape2(samples, scale_method, w, h, vae, use_t
     if hook is not None:
         pixels = hook.post_upscale(pixels)
 
-    return vae_encode(vae, pixels, use_tile, hook, tile_size=tile_size, overlap=overlap), old_pixels
+    return (vae_encode(vae, pixels, use_tile, hook, tile_size=tile_size), old_pixels)
 
 
-def latent_upscale_on_pixel_space(samples, scale_method, scale_factor, vae, use_tile=False, tile_size=512, save_temp_prefix=None, hook=None, overlap=64):
-    return latent_upscale_on_pixel_space2(samples, scale_method, scale_factor, vae, use_tile, tile_size, save_temp_prefix, hook, overlap=overlap)[0]
+def latent_upscale_on_pixel_space(samples, scale_method, scale_factor, vae, use_tile=False, tile_size=512, save_temp_prefix=None, hook=None):
+    return latent_upscale_on_pixel_space2(samples, scale_method, scale_factor, vae, use_tile, tile_size, save_temp_prefix, hook)[0]
 
 
-def latent_upscale_on_pixel_space2(samples, scale_method, scale_factor, vae, use_tile=False, tile_size=512, save_temp_prefix=None, hook=None, overlap=64):
-    pixels = vae_decode(vae, samples, use_tile, hook, tile_size=tile_size, overlap=overlap)
+def latent_upscale_on_pixel_space2(samples, scale_method, scale_factor, vae, use_tile=False, tile_size=512, save_temp_prefix=None, hook=None):
+    pixels = vae_decode(vae, samples, use_tile, hook, tile_size=tile_size)
 
     if save_temp_prefix is not None:
         nodes.PreviewImage().save_images(pixels, filename_prefix=save_temp_prefix)
@@ -1438,15 +1415,15 @@ def latent_upscale_on_pixel_space2(samples, scale_method, scale_factor, vae, use
     if hook is not None:
         pixels = hook.post_upscale(pixels)
 
-    return vae_encode(vae, pixels, use_tile, hook, tile_size=tile_size, overlap=overlap), old_pixels
+    return (vae_encode(vae, pixels, use_tile, hook, tile_size=tile_size), old_pixels)
 
 
-def latent_upscale_on_pixel_space_with_model_shape(samples, scale_method, upscale_model, new_w, new_h, vae, use_tile=False, tile_size=512, save_temp_prefix=None, hook=None, overlap=64):
-    return latent_upscale_on_pixel_space_with_model_shape2(samples, scale_method, upscale_model, new_w, new_h, vae, use_tile, tile_size, save_temp_prefix, hook, overlap=overlap)[0]
+def latent_upscale_on_pixel_space_with_model_shape(samples, scale_method, upscale_model, new_w, new_h, vae, use_tile=False, tile_size=512, save_temp_prefix=None, hook=None):
+    return latent_upscale_on_pixel_space_with_model_shape2(samples, scale_method, upscale_model, new_w, new_h, vae, use_tile, tile_size, save_temp_prefix, hook)[0]
 
 
-def latent_upscale_on_pixel_space_with_model_shape2(samples, scale_method, upscale_model, new_w, new_h, vae, use_tile=False, tile_size=512, save_temp_prefix=None, hook=None, overlap=64):
-    pixels = vae_decode(vae, samples, use_tile, hook, tile_size=tile_size, overlap=overlap)
+def latent_upscale_on_pixel_space_with_model_shape2(samples, scale_method, upscale_model, new_w, new_h, vae, use_tile=False, tile_size=512, save_temp_prefix=None, hook=None):
+    pixels = vae_decode(vae, samples, use_tile, hook, tile_size=tile_size)
 
     if save_temp_prefix is not None:
         nodes.PreviewImage().save_images(pixels, filename_prefix=save_temp_prefix)
@@ -1469,16 +1446,16 @@ def latent_upscale_on_pixel_space_with_model_shape2(samples, scale_method, upsca
     if hook is not None:
         pixels = hook.post_upscale(pixels)
 
-    return vae_encode(vae, pixels, use_tile, hook, tile_size=tile_size, overlap=overlap), old_pixels
+    return (vae_encode(vae, pixels, use_tile, hook, tile_size=tile_size), old_pixels)
 
 
 def latent_upscale_on_pixel_space_with_model(samples, scale_method, upscale_model, scale_factor, vae, use_tile=False,
-                                             tile_size=512, save_temp_prefix=None, hook=None, overlap=64):
-    return latent_upscale_on_pixel_space_with_model2(samples, scale_method, upscale_model, scale_factor, vae, use_tile, tile_size, save_temp_prefix, hook, overlap=overlap)[0]
+                                             tile_size=512, save_temp_prefix=None, hook=None):
+    return latent_upscale_on_pixel_space_with_model2(samples, scale_method, upscale_model, scale_factor, vae, use_tile, tile_size, save_temp_prefix, hook)[0]
 
 def latent_upscale_on_pixel_space_with_model2(samples, scale_method, upscale_model, scale_factor, vae, use_tile=False,
-                                              tile_size=512, save_temp_prefix=None, hook=None, overlap=64):
-    pixels = vae_decode(vae, samples, use_tile, hook, tile_size=tile_size, overlap=overlap)
+                                              tile_size=512, save_temp_prefix=None, hook=None):
+    pixels = vae_decode(vae, samples, use_tile, hook, tile_size=tile_size)
 
     if save_temp_prefix is not None:
         nodes.PreviewImage().save_images(pixels, filename_prefix=save_temp_prefix)
@@ -1505,7 +1482,7 @@ def latent_upscale_on_pixel_space_with_model2(samples, scale_method, upscale_mod
     if hook is not None:
         pixels = hook.post_upscale(pixels)
 
-    return vae_encode(vae, pixels, use_tile, hook, tile_size=tile_size, overlap=overlap), old_pixels
+    return (vae_encode(vae, pixels, use_tile, hook, tile_size=tile_size), old_pixels)
 
 
 class TwoSamplersForMaskUpscaler:
@@ -1675,14 +1652,8 @@ class PixelKSampleUpscaler:
                 preprocessor = nodes.NODE_CLASS_MAPPINGS['TilePreprocessor']()
                 # might add capacity to set pyrUp_iters later, not needed for now though
                 preprocessed = preprocessor.execute(images, pyrUp_iters=3, resolution=min(image_w, image_h))[0]
-                positive, negative = nodes.ControlNetApplyAdvanced().apply_controlnet(positive=positive,
-                                                                                      negative=negative,
-                                                                                      control_net=self.tile_cnet,
-                                                                                      image=preprocessed,
-                                                                                      strength=self.tile_cnet_strength,
-                                                                                      start_percent=0,
-                                                                                      end_percent=1.0,
-                                                                                      vae=self.vae)
+                apply_cnet = getattr(nodes.ControlNetApply(), nodes.ControlNetApply.FUNCTION)
+                positive = apply_cnet(positive, self.tile_cnet, preprocessed, strength=self.tile_cnet_strength)[0]
 
         refined_latent = impact_sampling.impact_sample(model, seed, steps, cfg, sampler_name, scheduler,
                                                        positive, negative, upscaled_latent, denoise, scheduler_func=self.scheduler_func)
@@ -1953,7 +1924,7 @@ class PixelTiledKSampleUpscaler:
     def __init__(self, scale_method, model, vae, seed, steps, cfg, sampler_name, scheduler, positive, negative,
                  denoise,
                  tile_width, tile_height, tiling_strategy,
-                 upscale_model_opt=None, hook_opt=None, tile_cnet_opt=None, tile_size=512, tile_cnet_strength=1.0, overlap=64):
+                 upscale_model_opt=None, hook_opt=None, tile_cnet_opt=None, tile_size=512, tile_cnet_strength=1.0):
         self.params = scale_method, model, vae, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise
         self.vae = vae
         self.tile_params = tile_width, tile_height, tiling_strategy
@@ -1963,7 +1934,6 @@ class PixelTiledKSampleUpscaler:
         self.tile_size = tile_size
         self.is_tiled = True
         self.tile_cnet_strength = tile_cnet_strength
-        self.overlap = overlap
 
     def tiled_ksample(self, latent, images):
         if "BNK_TiledKSampler" in nodes.NODE_CLASS_MAPPINGS:
@@ -1986,14 +1956,8 @@ class PixelTiledKSampleUpscaler:
                 preprocessor = nodes.NODE_CLASS_MAPPINGS['TilePreprocessor']()
                 # might add capacity to set pyrUp_iters later, not needed for now though
                 preprocessed = preprocessor.execute(images, pyrUp_iters=3, resolution=min(image_w, image_h))[0]
-
-                positive, negative = nodes.ControlNetApplyAdvanced().apply_controlnet(positive=positive,
-                                                                                      negative=negative,
-                                                                                      control_net=self.tile_cnet,
-                                                                                      image=preprocessed,
-                                                                                      strength=self.tile_cnet_strength,
-                                                                                      start_percent=0, end_percent=1.0,
-                                                                                      vae=self.vae)
+                apply_cnet = getattr(nodes.ControlNetApply(), nodes.ControlNetApply.FUNCTION)
+                positive = apply_cnet(positive, self.tile_cnet, preprocessed, strength=self.tile_cnet_strength)[0]
 
         return TiledKSampler().sample(model, seed, tile_width, tile_height, tiling_strategy, steps, cfg, sampler_name,
                                       scheduler, positive, negative, latent, denoise)[0]

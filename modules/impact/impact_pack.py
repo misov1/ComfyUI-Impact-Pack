@@ -28,7 +28,6 @@ import base64
 import impact.wildcards as wildcards
 from . import hooks
 from . import utils
-import inspect
 
 
 try:
@@ -225,10 +224,6 @@ class DetailerForEach:
     FUNCTION = "doit"
 
     CATEGORY = "ImpactPack/Detailer"
-
-    @staticmethod
-    def get_core_module():
-        return core
 
     @staticmethod
     def do_detail(image, segs, model, clip, vae, guide_size, guide_size_for_bbox, max_size, seed, steps, cfg, sampler_name, scheduler,
@@ -987,7 +982,6 @@ class PixelTiledKSampleUpscalerProvider:
                         "pk_hook_opt": ("PK_HOOK", ),
                         "tile_cnet_opt": ("CONTROL_NET", ),
                         "tile_cnet_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                        "overlap": ("INT", {"default": 64, "min": 0, "max": 4096, "step": 32}),
                     }
                 }
 
@@ -997,11 +991,11 @@ class PixelTiledKSampleUpscalerProvider:
     CATEGORY = "ImpactPack/Upscale"
 
     def doit(self, scale_method, model, vae, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise, tile_width, tile_height, tiling_strategy, upscale_model_opt=None,
-             pk_hook_opt=None, tile_cnet_opt=None, tile_cnet_strength=1.0, overlap=64):
+             pk_hook_opt=None, tile_cnet_opt=None, tile_cnet_strength=1.0):
         if "BNK_TiledKSampler" in nodes.NODE_CLASS_MAPPINGS:
             upscaler = core.PixelTiledKSampleUpscaler(scale_method, model, vae, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise,
                                                       tile_width, tile_height, tiling_strategy, upscale_model_opt, pk_hook_opt, tile_cnet_opt,
-                                                      tile_size=max(tile_width, tile_height), tile_cnet_strength=tile_cnet_strength, overlap=overlap)
+                                                      tile_size=max(tile_width, tile_height), tile_cnet_strength=tile_cnet_strength)
             return (upscaler, )
         else:
             utils.try_install_custom_node('https://github.com/BlenderNeko/ComfyUI_TiledKSampler',
@@ -1314,11 +1308,7 @@ class IterativeImageUpscale:
 
         core.update_node_status(unique_id, "VAEEncode (first)", 0)
         if upscaler.is_tiled:
-            encoder = nodes.VAEEncodeTiled()
-            if 'overlap' in inspect.signature(encoder.encode).parameters:
-                latent = encoder.encode(vae, pixels, upscaler.tile_size, overlap=upscaler.overlap)[0]
-            else:
-                latent = encoder.encode(vae, pixels, upscaler.tile_size)[0]
+            latent = nodes.VAEEncodeTiled().encode(vae, pixels, upscaler.tile_size)[0]
         else:
             latent = nodes.VAEEncode().encode(vae, pixels)[0]
 
@@ -1840,135 +1830,6 @@ def get_file_item(base_type, path):
            }
 
 
-class MaskRectArea:
-    # Creates a rectangle mask using percentage.
-    def __init__(self):
-        pass
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-            },
-            "hidden": {"extra_pnginfo": "EXTRA_PNGINFO", "unique_id": "UNIQUE_ID"}
-        }
-
-    RETURN_TYPES = ("MASK",)
-    
-    CATEGORY = "ImpactPack/Operation"
-    FUNCTION = "create_mask"
-
-    def create_mask(self, extra_pnginfo, unique_id, **kwargs):
-        # search for node
-        node_found = False
-        for node in extra_pnginfo["workflow"]["nodes"]:
-            if node["id"] == int(unique_id):
-                min_x = node["properties"].get("x", 0) / 100
-                min_y = node["properties"].get("y", 0) / 100
-                width = node["properties"].get("w", 0) / 100
-                height = node["properties"].get("h", 0) / 100
-                blur_radius = node["properties"].get("blur_radius", 0)
-                node_found = True
-                break
-                
-        if not node_found:
-            raise ValueError(f"No node found with unique_id {unique_id}.")
-                
-        # Create a mask with standard resolution (e.g., 512x512)
-        resolution = 512
-        mask = torch.zeros((resolution, resolution))
-
-        # Calculate pixel coordinates
-        min_x_px = int(min_x * resolution)
-        min_y_px = int(min_y * resolution)
-        max_x_px = int((min_x + width) * resolution)
-        max_y_px = int((min_y + height) * resolution)
-
-        # Draw the rectangle on the mask
-        mask[min_y_px:max_y_px, min_x_px:max_x_px] = 1
-
-        # Apply blur if the radii are greater than 0
-        if blur_radius > 0:
-            dx = blur_radius * 2 + 1
-            dy = blur_radius * 2 + 1
-
-            # Convert the mask to a format compatible with OpenCV (numpy array)
-            mask_np = mask.cpu().numpy().astype("float32")
-
-            # Apply Gaussian Blur
-            blurred_mask = cv2.GaussianBlur(mask_np, (dx, dy), 0)
-
-            # Convert back to tensor
-            mask = torch.from_numpy(blurred_mask)
-
-        # Return the mask as a tensor with an additional channel
-        return (mask.unsqueeze(0),)
-
-
-class MaskRectAreaAdvanced:
-    # Creates a rectangle mask using pixels relative to image size.
-    def __init__(self):
-        pass
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-            },
-            "hidden": {"extra_pnginfo": "EXTRA_PNGINFO", "unique_id": "UNIQUE_ID"}
-        }
-
-    RETURN_TYPES = ("MASK",)
-    
-    CATEGORY = "ImpactPack/Operation"
-    FUNCTION = "create_mask_advanced"
-
-    def create_mask_advanced(self, extra_pnginfo, unique_id, **kwargs):
-        # search for node
-        node_found = False
-        for node in extra_pnginfo["workflow"]["nodes"]:
-            if node["id"] == int(unique_id):
-                min_x = node["properties"]["x"]
-                min_y = node["properties"]["y"]
-                width = node["properties"]["w"]
-                height = node["properties"]["h"]
-                image_width = node["properties"]["width"]
-                image_height = node["properties"]["height"]
-                blur_radius = node["properties"]["blur_radius"]
-                node_found = True
-                break
-                
-        if not node_found:
-            raise ValueError(f"No node found with unique_id {unique_id}.")
-
-        # Calculate maximum coordinates
-        max_x = min_x + width
-        max_y = min_y + height
-
-        # Create a mask with the image dimensions
-        mask = torch.zeros((image_height, image_width))
-
-        # Draw the rectangle on the mask
-        mask[int(min_y):int(max_y), int(min_x):int(max_x)] = 1
-
-        # Apply blur if the radii are greater than 0
-        if blur_radius > 0:
-            dx = blur_radius * 2 + 1
-            dy = blur_radius * 2 + 1
-
-            # Convert the mask to a format compatible with OpenCV (numpy array)
-            mask_np = mask.cpu().numpy().astype("float32")
-
-            # Apply Gaussian Blur
-            blurred_mask = cv2.GaussianBlur(mask_np, (dx, dy), 0)
-
-            # Convert back to tensor
-            mask = torch.from_numpy(blurred_mask)
-
-        # Return the mask as a tensor with an additional channel
-        return (mask.unsqueeze(0),)
-
-
 class ImageReceiver:
     @classmethod
     def INPUT_TYPES(s):
@@ -2166,12 +2027,7 @@ class LatentSender(nodes.SaveLatent):
                              "samples": ("LATENT", ),
                              "filename_prefix": ("STRING", {"default": "latents/LatentSender"}),
                              "link_id": ("INT", {"default": 0, "min": 0, "max": sys.maxsize, "step": 1}),
-                             "preview_method": (["Latent2RGB-FLUX.1",
-                                                 "Latent2RGB-SDXL", "Latent2RGB-SD15", "Latent2RGB-SD3",
-                                                 "Latent2RGB-SD-X4", "Latent2RGB-Playground-2.5",
-                                                 "Latent2RGB-SC-Prior", "Latent2RGB-SC-B",
-                                                 "Latent2RGB-LTXV",
-                                                 "TAEF1", "TAESDXL", "TAESD15", "TAESD3"],)
+                             "preview_method": (["Latent2RGB-SDXL", "Latent2RGB-SD15", "TAESDXL", "TAESD15"],)
                              },
                 "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
                 }
@@ -2213,33 +2069,14 @@ class LatentSender(nodes.SaveLatent):
         if preview_method == "Latent2RGB-SD15":
             latent_format = latent_formats.SD15()
             method = LatentPreviewMethod.Latent2RGB
-        elif preview_method == "Latent2RGB-SDXL":
-            latent_format = latent_formats.SDXL()
-            method = LatentPreviewMethod.Latent2RGB
-        elif preview_method == "Latent2RGB-SD3":
-            latent_format = latent_formats.SD3()
-            method = LatentPreviewMethod.Latent2RGB
-        elif preview_method == "Latent2RGB-SD-X4":
-            latent_format = latent_formats.SD_X4()
-            method = LatentPreviewMethod.Latent2RGB
-        elif preview_method == "Latent2RGB-Playground-2.5":
-            latent_format = latent_formats.SDXL_Playground_2_5()
-            method = LatentPreviewMethod.Latent2RGB
-        elif preview_method == "Latent2RGB-SC-Prior":
-            latent_format = latent_formats.SC_Prior()
-            method = LatentPreviewMethod.Latent2RGB
-        elif preview_method == "Latent2RGB-SC-B":
-            latent_format = latent_formats.SC_B()
-            method = LatentPreviewMethod.Latent2RGB
-        elif preview_method == "Latent2RGB-FLUX.1":
-            latent_format = latent_formats.Flux()
-            method = LatentPreviewMethod.Latent2RGB
-        elif preview_method == "Latent2RGB-LTXV":
-            latent_format = latent_formats.LTXV()
-            method = LatentPreviewMethod.Latent2RGB
-        else:
-            print(f"[Impact Pack] LatentSender: '{preview_method}' is unsupported preview method.")
+        elif preview_method == "TAESD15":
             latent_format = latent_formats.SD15()
+            method = LatentPreviewMethod.TAESD
+        elif preview_method == "TAESDXL":
+            latent_format = latent_formats.SDXL()
+            method = LatentPreviewMethod.TAESD
+        else:  # preview_method == "Latent2RGB-SDXL"
+            latent_format = latent_formats.SDXL()
             method = LatentPreviewMethod.Latent2RGB
 
         previewer = core.get_previewer("cpu", latent_format=latent_format, force=True, method=method)
@@ -2313,18 +2150,15 @@ class ImpactWildcardProcessor:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
-                        "wildcard_text": ("STRING", {"multiline": True, "dynamicPrompts": False, "tooltip": "Enter a prompt using wildcard syntax."}),
-                        "populated_text": ("STRING", {"multiline": True, "dynamicPrompts": False, "tooltip": "The actual value passed during the execution of 'ImpactWildcardProcessor' is what is shown here. The behavior varies slightly depending on the mode. Wildcard syntax can also be used in 'populated_text'."}),
-                        "mode": ("BOOLEAN", {"default": True, "label_on": "Populate", "label_off": "Fixed", "tooltip": "Populate: Before running the workflow, it overwrites the existing value of 'populated_text' with the prompt processed from 'wildcard_text'. In this mode, 'populated_text' cannot be edited.\nFixed: Ignores wildcard_text and keeps 'populated_text' as is. You can edit 'populated_text' in this mode."}),
-                        "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "tooltip": "Determines the random seed to be used for wildcard processing."}),
+                        "wildcard_text": ("STRING", {"multiline": True, "dynamicPrompts": False}),
+                        "populated_text": ("STRING", {"multiline": True, "dynamicPrompts": False}),
+                        "mode": ("BOOLEAN", {"default": True, "label_on": "Populate", "label_off": "Fixed"}),
+                        "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                         "Select to add Wildcard": (["Select the Wildcard to add to the text"],),
                     },
                 }
 
     CATEGORY = "ImpactPack/Prompt"
-
-    DESCRIPTION = ("The 'ImpactWildcardProcessor' processes text prompts written in wildcard syntax and outputs the processed text prompt.\n\n"
-                   "TIP: Before the workflow is executed, the processing result of 'wildcard_text' is displayed in 'populated_text', and the populated text is saved along with the workflow. If you want to use a seed converted as input, write the prompt directly in 'populated_text' instead of 'wildcard_text', and set the mode to 'Fixed'.")
 
     RETURN_TYPES = ("STRING", )
     FUNCTION = "doit"
@@ -2344,21 +2178,16 @@ class ImpactWildcardEncode:
         return {"required": {
                         "model": ("MODEL",),
                         "clip": ("CLIP",),
-                        "wildcard_text": ("STRING", {"multiline": True, "dynamicPrompts": False, "tooltip": "Enter a prompt using wildcard syntax."}),
-                        "populated_text": ("STRING", {"multiline": True, "dynamicPrompts": False, "tooltip": "The actual value passed during the execution of 'ImpactWildcardEncode' is what is shown here. The behavior varies slightly depending on the mode. Wildcard syntax can also be used in 'populated_text'."}),
-                        "mode": ("BOOLEAN", {"default": True, "label_on": "Populate", "label_off": "Fixed", "tooltip": "Populate: Before running the workflow, it overwrites the existing value of 'populated_text' with the prompt processed from 'wildcard_text'. In this mode, 'populated_text' cannot be edited.\n"
-                                                                                                                       "Fixed: Ignores wildcard_text and keeps 'populated_text' as is. You can edit 'populated_text' in this mode."}),
+                        "wildcard_text": ("STRING", {"multiline": True, "dynamicPrompts": False}),
+                        "populated_text": ("STRING", {"multiline": True, "dynamicPrompts": False}),
+                        "mode": ("BOOLEAN", {"default": True, "label_on": "Populate", "label_off": "Fixed"}),
                         "Select to add LoRA": (["Select the LoRA to add to the text"] + folder_paths.get_filename_list("loras"), ),
                         "Select to add Wildcard": (["Select the Wildcard to add to the text"], ),
-                        "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "tooltip": "Determines the random seed to be used for wildcard processing."}),
+                        "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                     },
                 }
 
     CATEGORY = "ImpactPack/Prompt"
-
-    DESCRIPTION = ("The 'ImpactWildcardEncode' node processes text prompts written in wildcard syntax and outputs them as conditioning. It also supports LoRA syntax, with the applied LoRA reflected in the model's output.\n\n"
-                   "TIP1: Before the workflow is executed, the processing result of 'wildcard_text' is displayed in 'populated_text', and the populated text is saved along with the workflow. If you want to use a seed converted as input, write the prompt directly in 'populated_text' instead of 'wildcard_text', and set the mode to 'Fixed'.\n"
-                   "TIP2: If the 'Inspire Pack' is installed, LBW(LoRA Block Weight) syntax can also be applied.")
 
     RETURN_TYPES = ("MODEL", "CLIP", "CONDITIONING", "STRING")
     RETURN_NAMES = ("model", "clip", "conditioning", "populated_text")
@@ -2384,7 +2213,7 @@ class ImpactSchedulerAdapter:
     def INPUT_TYPES(s):
         return {"required": {
             "scheduler": (comfy.samplers.KSampler.SCHEDULERS, {"defaultInput": True, }),
-            "extra_scheduler": (['None', 'AYS SDXL', 'AYS SD1', 'AYS SVD', 'GITS[coeff=1.2]', 'LTXV[default]'],),
+            "extra_scheduler": (['None', 'AYS SDXL', 'AYS SD1', 'AYS SVD', 'GITS[coeff=1.2]'],),
         }}
 
     CATEGORY = "ImpactPack/Util"

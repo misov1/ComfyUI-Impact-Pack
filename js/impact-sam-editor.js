@@ -262,7 +262,7 @@ class ImpactSamEditorDialog extends ComfyDialog {
 			const pointsCanvas = document.createElement('canvas');
 
 			imgCanvas.id = "imageCanvas";
-			maskCanvas.id = "samEditorMaskCanvas";
+			maskCanvas.id = "maskCanvas";
 			pointsCanvas.id = "pointsCanvas";
 
 			this.setlayout(imgCanvas, maskCanvas, pointsCanvas);
@@ -353,16 +353,13 @@ class ImpactSamEditorDialog extends ComfyDialog {
 			imgCtx.drawImage(orig_image, 0, 0, drawWidth, drawHeight);
 
 			// update mask
-			let w = (drawWidth * imgCanvas.clientWidth/imgCanvas.width) + "px";
-			let h = (drawHeight * imgCanvas.clientHeight/imgCanvas.height) + "px";
-
-			pointsCanvas.width = drawWidth * imgCanvas.clientWidth/imgCanvas.width;
-			pointsCanvas.height = drawHeight * imgCanvas.clientHeight/imgCanvas.height;
+			pointsCanvas.width = drawWidth;
+			pointsCanvas.height = drawHeight;
 			pointsCanvas.style.top = imgCanvas.offsetTop + "px";
 			pointsCanvas.style.left = imgCanvas.offsetLeft + "px";
 
-			maskCanvas.width = pointsCanvas.width;
-			maskCanvas.height = pointsCanvas.height;
+			maskCanvas.width = drawWidth;
+			maskCanvas.height = drawHeight;
 			maskCanvas.style.top = imgCanvas.offsetTop + "px";
 			maskCanvas.style.left = imgCanvas.offsetLeft + "px";
 
@@ -476,9 +473,8 @@ class ImpactSamEditorDialog extends ComfyDialog {
 		for(const i in self.prompt_points) {
 			const [is_positive, x, y] = self.prompt_points[i];
 			const point = [x,y];
-			if(is_positive) {
+			if(is_positive)
 				positive_points.push(point);
-			}
 			else
 				negative_points.push(point);
 		}
@@ -512,8 +508,8 @@ class ImpactSamEditorDialog extends ComfyDialog {
 			const x = event.offsetX || event.targetTouches[0].clientX - maskRect.left;
 			const y = event.offsetY || event.targetTouches[0].clientY - maskRect.top;
 
-			const originalX = x * self.image.width / self.pointsCanvas.clientWidth;
-			const originalY = y * self.image.height / self.pointsCanvas.clientHeight;
+			const originalX = x * self.image.width / self.pointsCanvas.width;
+			const originalY = y * self.image.height / self.pointsCanvas.height;
 
 			var point = null;
 			if (event.button == 0) {

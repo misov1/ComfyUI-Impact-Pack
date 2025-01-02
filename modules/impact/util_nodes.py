@@ -52,10 +52,7 @@ class GeneralSwitch:
 
         print(f"SELECTED: {input_name}")
 
-        if input_name in kwargs:
-            return [input_name]
-        else:
-            return []
+        return [input_name]
 
     @staticmethod
     def doit(*args, **kwargs):
@@ -504,7 +501,7 @@ class MakeMaskBatch:
     def doit(self, **kwargs):
         mask1 = kwargs['mask1']
         del kwargs['mask1']
-        masks = [make_3d_mask(value) for value in kwargs.values()]
+        masks = [utils.make_3d_mask(value) for value in kwargs.values()]
 
         if len(masks) == 0:
             return (mask1,)
@@ -526,9 +523,6 @@ class ReencodeLatent:
                         "output_vae": ("VAE", ),
                         "tile_size": ("INT", {"default": 512, "min": 320, "max": 4096, "step": 64}),
                     },
-                "optional": {
-                    "overlap": ("INT", {"default": 64, "min": 0, "max": 4096, "step": 32, "tooltip": "This setting applies when 'tile_mode' is enabled."}),
-                    }
                 }
 
     CATEGORY = "ImpactPack/Util"
@@ -536,22 +530,14 @@ class ReencodeLatent:
     RETURN_TYPES = ("LATENT", )
     FUNCTION = "doit"
 
-    def doit(self, samples, tile_mode, input_vae, output_vae, tile_size=512, overlap=64):
+    def doit(self, samples, tile_mode, input_vae, output_vae, tile_size=512):
         if tile_mode in ["Both", "Decode(input) only"]:
-            decoder = nodes.VAEDecodeTiled()
-            if 'overlap' in inspect.signature(decoder.decode).parameters:
-                pixels = decoder.decode(input_vae, samples, tile_size, overlap=overlap)[0]
-            else:
-                pixels = decoder.decode(input_vae, samples, tile_size, overlap=overlap)[0]
+            pixels = nodes.VAEDecodeTiled().decode(input_vae, samples, tile_size)[0]
         else:
             pixels = nodes.VAEDecode().decode(input_vae, samples)[0]
 
         if tile_mode in ["Both", "Encode(output) only"]:
-            encoder = nodes.VAEEncodeTiled()
-            if 'overlap' in inspect.signature(encoder.encode).parameters:
-                return encoder.encode(output_vae, pixels, tile_size, overlap=overlap)
-            else:
-                return encoder.encode(output_vae, pixels, tile_size)
+            return nodes.VAEEncodeTiled().encode(output_vae, pixels, tile_size)
         else:
             return nodes.VAEEncode().encode(output_vae, pixels)
 

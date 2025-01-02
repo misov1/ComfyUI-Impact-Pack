@@ -13,6 +13,7 @@ import traceback
 
 comfy_path = os.path.dirname(folder_paths.__file__)
 impact_path = os.path.join(os.path.dirname(__file__))
+subpack_path = os.path.join(os.path.dirname(__file__), "impact_subpack")
 modules_path = os.path.join(os.path.dirname(__file__), "modules")
 
 sys.path.append(modules_path)
@@ -21,9 +22,14 @@ import impact.config
 import impact.sample_error_enhancer
 print(f"### Loading: ComfyUI-Impact-Pack ({impact.config.version})")
 
+
+sys.path.append(subpack_path)
+
 # Core
 # recheck dependencies for colab
 try:
+    import impact.subpack_nodes  # This import must be done before cv2.
+
     import folder_paths
     import torch
     import cv2
@@ -137,8 +143,6 @@ NODE_CLASS_MAPPINGS = {
     "BitwiseAndMask": BitwiseAndMask,
     "SubtractMask": SubtractMask,
     "AddMask": AddMask,
-    "MaskRectArea": MaskRectArea,
-    "MaskRectAreaAdvanced": MaskRectAreaAdvanced,
     "ImpactSegsAndMask": SegsBitwiseAndMask,
     "ImpactSegsAndMaskForEach": SegsBitwiseAndMaskForEach,
     "EmptySegs": EmptySEGS,
@@ -269,7 +273,6 @@ NODE_CLASS_MAPPINGS = {
     "StringListToString": StringListToString,
     "WildcardPromptFromString": WildcardPromptFromString,
     "ImpactExecutionOrderController": ImpactExecutionOrderController,
-    "ImpactListBridge": ImpactListBridge,
 
     "RemoveNoiseMask": RemoveNoiseMask,
 
@@ -320,8 +323,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "BitwiseAndMask": "Pixelwise(MASK & MASK)",
     "SubtractMask": "Pixelwise(MASK - MASK)",
     "AddMask": "Pixelwise(MASK + MASK)",
-    "MaskRectArea": "Mask Rect Area",
-    "MaskRectAreaAdvanced": "Mask Rect Area (Advanced)",
     "ImpactFlattenMask": "Flatten Mask Batch",
     "DetailerForEach": "Detailer (SEGS)",
     "DetailerForEachPipe": "Detailer (SEGS/pipe)",
@@ -392,7 +393,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImpactSwitch": "Switch (Any)",
     "ImpactInversedSwitch": "Inversed Switch (Any)",
     "ImpactExecutionOrderController": "Execution Order Controller",
-    "ImpactListBridge": "List Bridge",
 
     "MasksToMaskList": "Mask Batch to Mask List",
     "MaskListToMaskBatch": "Mask List to Mask Batch",
@@ -463,6 +463,19 @@ if not impact.config.get_config()['mmdet_skip']:
         "SegmDetectorCombined": "SegmDetectorCombined (Legacy)",
     })
 
+try:
+    import impact.subpack_nodes
+
+    NODE_CLASS_MAPPINGS.update(impact.subpack_nodes.NODE_CLASS_MAPPINGS)
+    NODE_DISPLAY_NAME_MAPPINGS.update(impact.subpack_nodes.NODE_DISPLAY_NAME_MAPPINGS)
+except Exception as e:
+    print("### ComfyUI-Impact-Pack: (IMPORT FAILED) Subpack\n")
+    print("  The module at the `custom_nodes/ComfyUI-Impact-Pack/impact_subpack` path appears to be incomplete.")
+    print("  Recommended to delete the path and restart ComfyUI.")
+    print("  If the issue persists, please report it to https://github.com/ltdrdata/ComfyUI-Impact-Pack/issues.")
+    print("\n---------------------------------")
+    traceback.print_exc()
+    print("---------------------------------\n")
 
 # NOTE:  Inject directly into EXTENSION_WEB_DIRS instead of WEB_DIRECTORY
 #        Provide the js path fixed as ComfyUI-Impact-Pack instead of the path name, making it available for external use
